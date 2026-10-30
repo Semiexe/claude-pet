@@ -1,0 +1,21 @@
+# gebaute Dateien
+*.exe
+*.ico
+*.zip
+
+# Spielstand und Testdaten (liegen sonst in %APPDATA%\ClaudePet)
+state.txt
+Tagebuch.txt
+Verlauf.txt
+Saetze.txt
+Erinnerungen.txt
+EigenerHut.txt
+fehler.log
+tools.log
+preview.on
+status/
+
+# Editor und System
+.vs/
+*.user
+Thumbs.db
