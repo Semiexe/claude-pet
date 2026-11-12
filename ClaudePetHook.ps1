@@ -73,6 +73,12 @@ try {
     New-Item -ItemType Directory -Force $dir | Out-Null
     $file = Join-Path $dir ($sid + '.txt')
 
+    # Mehrere Hooks derselben Sitzung koennen gleichzeitig laufen: Lesen und Schreiben der Statusdatei nacheinander
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, ('Local\ClaudePetHook-' + $sid))
+        try { $locked = $mutex.WaitOne(4000) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
+    } catch { }
+
     $old = @{}
     $age = 9999.0
     if (Test-Path $file) {
@@ -142,5 +148,20 @@ try {
     if ($err) { $lines += "err=$err" }
     for ($n = 0; $n -lt $hist.Count; $n++) { $lines += ('h' + ($n + 1) + '=' + $hist[$n]) }
     if ($msg) { $lines += "msg=$msg" }
-    Set-Content -Path $file -Value $lines -Encoding UTF8
-} catch { }
+    # erst in eine Hilfsdatei schreiben und dann austauschen, damit das Pet nie eine halbe Datei liest
+    $tmp = $file + '.tmp'
+    [IO.File]::WriteAllLines($tmp, [string[]]$lines, (New-Object System.Text.UTF8Encoding($true)))
+    if (Test-Path $file) { [IO.File]::Replace($tmp, $file, [NullString]::Value) } else { Move-Item $tmp $file }
+} catch {
+    # Ein Hook darf Claude Code nie stoeren, deshalb kein Fehlerdialog. Der Grund steht in hook-fehler.log (klein gehalten).
+    try {
+        $lb = if ($base) { $base } elseif ($env:CLAUDEPET_HOME) { $env:CLAUDEPET_HOME } else { Join-Path $env:APPDATA 'ClaudePet' }
+        New-Item -ItemType Directory -Force $lb | Out-Null
+        $lp = Join-Path $lb 'hook-fehler.log'
+        if ((Test-Path $lp) -and (Get-Item $lp).Length -gt 65536) { Remove-Item $lp -ErrorAction SilentlyContinue }
+        [IO.File]::AppendAllText($lp, (Get-Date).ToString('s') + ' ' + $Kind + ': ' + $_.Exception.Message + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
+} finally {
+    try { if ($locked -and $mutex) { $mutex.ReleaseMutex() } } catch { }
+    try { if ($mutex) { $mutex.Dispose() } } catch { }
+}

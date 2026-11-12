@@ -6,8 +6,11 @@ $out = Join-Path $here 'ClaudePet.exe'
 $ico = Join-Path $here 'ClaudePet.ico'
 $files = @(Get-ChildItem (Join-Path $here 'src') -Filter '*.cs' | ForEach-Object { $_.FullName })
 
-# Laufendes Pet beenden: erst den Wächter (ohne --run), sonst startet er das Pet sofort neu
-$procs = @(Get-CimInstance Win32_Process -Filter "Name='ClaudePet.exe'")
+# Laufendes Pet beenden, aber nur das, dessen Datei überschrieben wird (eine Kopie in einem anderen Ordner bleibt ungestört).
+# Erst den Wächter (ohne --run), sonst startet er das Pet sofort neu
+$outFull = [IO.Path]::GetFullPath($out)
+$procs = @(Get-CimInstance Win32_Process -Filter "Name='ClaudePet.exe'" | Where-Object {
+    $_.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $outFull, [StringComparison]::OrdinalIgnoreCase) })
 foreach ($p in ($procs | Where-Object { $_.CommandLine -notmatch '--run' })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 foreach ($p in ($procs | Where-Object { $_.CommandLine -match '--run' })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 500
