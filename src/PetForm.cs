@@ -86,7 +86,7 @@ public partial class PetForm : Form
         timer = new System.Windows.Forms.Timer(); timer.Interval = 33;
         // Gezeichnet wird voll (30 Mal pro Sekunde) nur, wenn sich etwas bewegt; im Stand etwa 10 Mal pro Sekunde
         timer.Tick += delegate { Step(); if (Visible && (NeedFast() || ++idleTick % 3 == 0)) Render(); };
-        FormClosing += delegate { SaveState(); UnregisterHotKey(Handle, 1); DisposeMinis(); DisposeBall(); CloseGuest(); };
+        FormClosing += delegate { SaveState(); UnregisterHotKey(Handle, 1); DisposeMinis(); DisposeBall(); CloseGuest(); if (surf != null) { surf.Dispose(); surf = null; } };
         Shown += delegate {
             Say(DateTime.Now - lastSaved > TimeSpan.FromMinutes(10) ? (food < 25 ? "Du warst lange weg. Ich habe Hunger!" : "Schön, dass du wieder da bist!") : Greeting() + " Ich bin " + petName + ".");
             timer.Start();
@@ -119,72 +119,83 @@ public partial class PetForm : Form
     {
         try
         {
-            if (!File.Exists(path)) return;
-            foreach (string line in File.ReadAllLines(path))
+            // Fehlt der Spielstand oder ist er leer (etwa nach einem Stromausfall beim Schreiben), gilt die Sicherung vom letzten Speichern
+            string src = path;
+            if (!File.Exists(src) || new FileInfo(src).Length == 0) src = path + ".bak";
+            if (!File.Exists(src)) return;
+            foreach (string line in File.ReadAllLines(src))
             {
                 int i = line.IndexOf('='); if (i < 0) continue;
                 string k = line.Substring(0, i), v = line.Substring(i + 1);
-                if (k == "name") petName = v;
-                else if (k == "x") savedX = int.Parse(v);
-                else if (k == "focus") focusMode = v == "1";
-                else if (k == "minis") minisOn = v == "1";
-                else if (k == "break") breakOn = v == "1";
-                else if (k == "autohide") autoHideOn = v == "1";
-                else if (k == "sound") soundOn = v == "1";
-                else if (k == "hat") hatMode = v;
-                else if (k == "tasks") tasksTotal = int.Parse(v);
-                else if (k == "today") todayKey = v;
-                else if (k == "todayn") tasksToday = int.Parse(v);
-                else if (k == "ach") { achDone.Clear(); foreach (string x in v.Split(',')) if (x.Length > 0) achDone.Add(x); }
-                else if (k == "streak") streak = int.Parse(v);
-                else if (k == "lastday") lastDay = v;
-                else if (k == "todayproj") { projToday.Clear(); foreach (string x in v.Split('|')) if (x.Length > 0) projToday.Add(x); }
-                else if (k == "longest") longestMin = int.Parse(v);
-                else if (k == "longestproj") longestProj = v;
-                else if (k == "recapday") recapDay = v;
-                else if (k == "species") species = Array.IndexOf(SpeciesKeys, v) >= 0 ? v : "claude";
-                else if (k == "projcolors")
-                {
-                    projTint.Clear();
-                    foreach (string x in v.Split('|'))
-                    {
-                        int c = x.LastIndexOf(':'), idx;
-                        if (c > 0 && int.TryParse(x.Substring(c + 1), out idx) && idx >= 0 && idx < 4) projTint[x.Substring(0, c)] = idx;
-                    }
-                }
-                else if (k == "season") seasonOn = v == "1";
-                else if (k == "eyes") eyesOn = v == "1";
-                else if (k == "dance") danceOn = v == "1";
-                else if (k == "ctx") ctxOn = v == "1";
-                else if (k == "ctxmode") ctxMode = v == "200" || v == "1000" ? v : "auto";
-                else if (k == "evo") int.TryParse(v, out evoSeen);
-                else if (k == "fur") furKey = v;
-                else if (k == "voice") voiceOn = v == "1";
-                else if (k == "battery") batteryOn = v == "1";
-                else if (k == "water") waterOn = v == "1";
-                else if (k == "diaryday") diaryDay = v;
-                else if (k == "weekkey") weekKey = v;
-                else if (k == "guestday") guestDay = v;
-                else if (k == "gamebest") gameBest = int.Parse(v);
-                else if (k == "zoom") zoom = float.Parse(v, CultureInfo.InvariantCulture);
-                else if (k == "food") food = float.Parse(v, CultureInfo.InvariantCulture);
-                else if (k == "joy") joy = float.Parse(v, CultureInfo.InvariantCulture);
-                else if (k == "energy") energy = float.Parse(v, CultureInfo.InvariantCulture);
-                else if (k == "sleeping") sleeping = v == "1";
-                else if (k == "born") born = new DateTime(long.Parse(v));
-                else if (k == "saved") lastSaved = new DateTime(long.Parse(v));
+                // Eine einzelne kaputte Zeile kostet nur diesen Wert, nicht den ganzen Spielstand
+                try { LoadValue(k, v); } catch { }
             }
+            if (!(zoom >= 0.5f && zoom <= 3f)) zoom = 1f;
+            food = C(food); joy = C(joy); energy = C(energy);
+            if (born > DateTime.Now) born = DateTime.Now;
             float away = (float)Math.Min((DateTime.Now - lastSaved).TotalMinutes, 720);
             if (decay && away > 0) Decay(away);
         }
         catch { }
+    }
+    void LoadValue(string k, string v)
+    {
+        if (k == "name") petName = v;
+        else if (k == "x") savedX = int.Parse(v);
+        else if (k == "focus") focusMode = v == "1";
+        else if (k == "minis") minisOn = v == "1";
+        else if (k == "break") breakOn = v == "1";
+        else if (k == "autohide") autoHideOn = v == "1";
+        else if (k == "sound") soundOn = v == "1";
+        else if (k == "hat") hatMode = v;
+        else if (k == "tasks") tasksTotal = int.Parse(v);
+        else if (k == "today") todayKey = v;
+        else if (k == "todayn") tasksToday = int.Parse(v);
+        else if (k == "ach") { achDone.Clear(); foreach (string x in v.Split(',')) if (x.Length > 0) achDone.Add(x); }
+        else if (k == "streak") streak = int.Parse(v);
+        else if (k == "lastday") lastDay = v;
+        else if (k == "todayproj") { projToday.Clear(); foreach (string x in v.Split('|')) if (x.Length > 0) projToday.Add(x); }
+        else if (k == "longest") longestMin = int.Parse(v);
+        else if (k == "longestproj") longestProj = v;
+        else if (k == "recapday") recapDay = v;
+        else if (k == "species") species = Array.IndexOf(SpeciesKeys, v) >= 0 ? v : "claude";
+        else if (k == "projcolors")
+        {
+            projTint.Clear();
+            foreach (string x in v.Split('|'))
+            {
+                int c = x.LastIndexOf(':'), idx;
+                if (c > 0 && int.TryParse(x.Substring(c + 1), out idx) && idx >= 0 && idx < 4) projTint[x.Substring(0, c)] = idx;
+            }
+        }
+        else if (k == "season") seasonOn = v == "1";
+        else if (k == "eyes") eyesOn = v == "1";
+        else if (k == "dance") danceOn = v == "1";
+        else if (k == "ctx") ctxOn = v == "1";
+        else if (k == "ctxmode") ctxMode = v == "200" || v == "1000" ? v : "auto";
+        else if (k == "evo") int.TryParse(v, out evoSeen);
+        else if (k == "fur") furKey = v;
+        else if (k == "voice") voiceOn = v == "1";
+        else if (k == "battery") batteryOn = v == "1";
+        else if (k == "water") waterOn = v == "1";
+        else if (k == "diaryday") diaryDay = v;
+        else if (k == "weekkey") weekKey = v;
+        else if (k == "guestday") guestDay = v;
+        else if (k == "gamebest") gameBest = int.Parse(v);
+        else if (k == "zoom") zoom = float.Parse(v, CultureInfo.InvariantCulture);
+        else if (k == "food") food = float.Parse(v, CultureInfo.InvariantCulture);
+        else if (k == "joy") joy = float.Parse(v, CultureInfo.InvariantCulture);
+        else if (k == "energy") energy = float.Parse(v, CultureInfo.InvariantCulture);
+        else if (k == "sleeping") sleeping = v == "1";
+        else if (k == "born") born = new DateTime(long.Parse(v));
+        else if (k == "saved") lastSaved = new DateTime(long.Parse(v));
     }
     void SaveState()
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllLines(path, new string[] {
+            string[] lines = new string[] {
                 "name=" + petName, "zoom=" + zoom.ToString(CultureInfo.InvariantCulture), "x=" + px, "focus=" + (focusMode ? "1" : "0"),
                 "minis=" + (minisOn ? "1" : "0"), "break=" + (breakOn ? "1" : "0"), "autohide=" + (autoHideOn ? "1" : "0"),
                 "sound=" + (soundOn ? "1" : "0"), "hat=" + hatMode, "tasks=" + tasksTotal, "today=" + todayKey, "todayn=" + tasksToday,
@@ -197,7 +208,17 @@ public partial class PetForm : Form
                 "joy=" + joy.ToString(CultureInfo.InvariantCulture),
                 "energy=" + energy.ToString(CultureInfo.InvariantCulture),
                 "sleeping=" + (sleeping ? "1" : "0"),
-                "born=" + born.Ticks, "saved=" + DateTime.Now.Ticks });
+                "born=" + born.Ticks, "saved=" + DateTime.Now.Ticks };
+            // Erst in eine Hilfsdatei schreiben und dann austauschen: Ein Absturz mitten im Speichern hinterlässt nie einen halben Spielstand.
+            // Der vorige Stand bleibt als state.txt.bak liegen.
+            string tmp = path + ".tmp";
+            File.WriteAllLines(tmp, lines);
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", true);
+                else File.Move(tmp, path);
+            }
+            catch (IOException) { File.Copy(tmp, path, true); File.Delete(tmp); }       // etwa wenn ein Virenscanner die Datei kurz hält
         }
         catch { }
     }
@@ -342,6 +363,22 @@ public partial class PetForm : Form
                     }
                 }
                 big.Save(file, ImageFormat.Png);
+            }
+            return;
+        }
+        else if (st == "surface")
+        {
+            // derselbe Zustand einmal über die bleibende Zeichenfläche (wie im Betrieb) gezeichnet
+            f.hatMode = "none"; f.bubbleUntil = DateTime.MinValue;
+            using (Layered.Surface s = new Layered.Surface())
+            {
+                for (int i = 0; i < 3; i++) using (Graphics g = s.Begin(f.W, f.H)) f.Draw(g);     // mehrfach: alte Bilder dürfen nicht durchscheinen
+                using (Bitmap b = s.Copy()) b.Save(file, ImageFormat.Png);
+                using (Bitmap b = new Bitmap(f.W, f.H, PixelFormat.Format32bppPArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(b)) { g.Clear(Color.Transparent); f.Draw(g); }
+                    b.Save(file.Replace(".png", "-alt.png"), ImageFormat.Png);
+                }
             }
             return;
         }

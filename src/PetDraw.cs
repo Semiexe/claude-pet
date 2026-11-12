@@ -326,22 +326,13 @@ public partial class PetForm
     }
 
     // Zeichnet ein Bild und legt es mit Transparenz aufs Fenster
+    // Die Zeichenfläche bleibt bestehen, statt in jedem Takt ein neues Bild anzulegen und zu kopieren
+    Layered.Surface surf;
     void Render()
     {
         lastRX = px; lastRY = py;
-        using (Bitmap bmp = new Bitmap(W, H, PixelFormat.Format32bppPArgb))
-        {
-            using (Graphics g = Graphics.FromImage(bmp)) { g.Clear(Color.Transparent); Draw(g); }
-            IntPtr screen = GetDC(IntPtr.Zero);
-            IntPtr mem = CreateCompatibleDC(screen);
-            IntPtr hb = bmp.GetHbitmap(Color.FromArgb(0));
-            IntPtr old = SelectObject(mem, hb);
-            SIZE sz = new SIZE(); sz.cx = W; sz.cy = H;
-            POINT src = new POINT();
-            POINT dst = new POINT(); dst.x = px; dst.y = py;
-            BLEND bl = new BLEND(); bl.Op = 0; bl.Flags = 0; bl.Alpha = 255; bl.Format = 1;
-            UpdateLayeredWindow(Handle, screen, ref dst, ref sz, mem, ref src, 0, ref bl, 2);
-            SelectObject(mem, old); DeleteObject(hb); DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen);
-        }
+        if (surf == null) surf = new Layered.Surface();
+        using (Graphics g = surf.Begin(W, H)) Draw(g);
+        if (!surf.Present(Handle, px, py) && Visible) LogError("Das Bild ließ sich nicht aufs Fenster legen (Fehler " + System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ").");
     }
 }

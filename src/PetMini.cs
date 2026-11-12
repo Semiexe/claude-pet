@@ -34,6 +34,80 @@ static class Layered
         UpdateLayeredWindow(hwnd, screen, ref dst, ref sz, mem, ref src, 0, ref bl, 2);
         SelectObject(mem, old); DeleteObject(hb); DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen);
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BITMAPINFOHEADER { public int biSize, biWidth, biHeight; public short biPlanes, biBitCount; public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant; }
+    [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32.dll")] static extern bool GdiFlush();
+
+    // Eine Zeichenfläche, die über viele Bilder hinweg bestehen bleibt. Gezeichnet wird direkt in den Speicher,
+    // den auch Windows für das Fenster liest: kein neues Bild und keine Kopie pro Takt.
+    internal sealed class Surface : IDisposable
+    {
+        IntPtr dc, hbmp, oldObj;
+        Bitmap bmp;
+        int w, h;
+
+        // Liefert eine leere Zeichenfläche der gewünschten Größe
+        public Graphics Begin(int width, int height)
+        {
+            if (bmp == null || width != w || height != h) Create(Math.Max(1, width), Math.Max(1, height));
+            Graphics g = Graphics.FromImage(bmp);
+            g.Clear(Color.Transparent);
+            return g;
+        }
+
+        // Legt das gezeichnete Bild aufs Fenster; false, wenn Windows es ablehnt
+        public bool Present(IntPtr hwnd, int x, int y)
+        {
+            if (bmp == null) return false;
+            GdiFlush();
+            IntPtr screen = GetDC(IntPtr.Zero);
+            try
+            {
+                SIZE sz = new SIZE(); sz.cx = w; sz.cy = h;
+                POINT src = new POINT();
+                POINT dst = new POINT(); dst.x = x; dst.y = y;
+                BLEND bl = new BLEND(); bl.Op = 0; bl.Flags = 0; bl.Alpha = 255; bl.Format = 1;
+                return UpdateLayeredWindow(hwnd, screen, ref dst, ref sz, dc, ref src, 0, ref bl, 2);
+            }
+            finally { ReleaseDC(IntPtr.Zero, screen); }
+        }
+
+        // Kopie des aktuellen Inhalts (für Tests)
+        public Bitmap Copy() { GdiFlush(); return bmp == null ? null : bmp.Clone(new Rectangle(0, 0, w, h), PixelFormat.Format32bppPArgb); }
+
+        void Create(int width, int height)
+        {
+            Free();
+            BITMAPINFOHEADER bi = new BITMAPINFOHEADER();
+            bi.biSize = Marshal.SizeOf(typeof(BITMAPINFOHEADER));
+            bi.biWidth = width; bi.biHeight = -height;          // negativ: Zeilen von oben nach unten, wie bei GDI+
+            bi.biPlanes = 1; bi.biBitCount = 32;
+            IntPtr screen = GetDC(IntPtr.Zero);
+            try
+            {
+                IntPtr bits;
+                dc = CreateCompatibleDC(screen);
+                hbmp = CreateDIBSection(screen, ref bi, 0, out bits, IntPtr.Zero, 0);
+                if (dc == IntPtr.Zero || hbmp == IntPtr.Zero || bits == IntPtr.Zero) { Free(); throw new InvalidOperationException("Zeichenfläche konnte nicht angelegt werden"); }
+                oldObj = SelectObject(dc, hbmp);
+                bmp = new Bitmap(width, height, width * 4, PixelFormat.Format32bppPArgb, bits);
+                w = width; h = height;
+            }
+            finally { ReleaseDC(IntPtr.Zero, screen); }
+        }
+
+        void Free()
+        {
+            if (bmp != null) { bmp.Dispose(); bmp = null; }
+            if (dc != IntPtr.Zero) { if (oldObj != IntPtr.Zero) SelectObject(dc, oldObj); DeleteDC(dc); dc = IntPtr.Zero; }
+            if (hbmp != IntPtr.Zero) { DeleteObject(hbmp); hbmp = IntPtr.Zero; }
+            oldObj = IntPtr.Zero; w = 0; h = 0;
+        }
+
+        public void Dispose() { Free(); }
+    }
 }
 
 // Ein kleines Pet für eine Claude-Sitzung. Es läuft neben dem großen Pet her und zeigt den Zustand dieser Sitzung.
@@ -103,11 +177,20 @@ class MiniPet : Form
         if (x == lastX && y == lastY && ((frameN++) & 1) == 1) return;
         lastX = x; lastY = y;
         if (!Visible) Show();
-        using (Bitmap bmp = new Bitmap(W, H, PixelFormat.Format32bppPArgb))
+        if (surf == null) surf = new Layered.Surface();
+        using (Graphics g = surf.Begin(W, H)) DrawInto(g);
+        surf.Present(Handle, x, y);
+    }
+    Layered.Surface surf;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
         {
-            using (Graphics g = Graphics.FromImage(bmp)) { g.Clear(Color.Transparent); DrawInto(g); }
-            Layered.Update(Handle, bmp, x, y);
+            if (surf != null) { surf.Dispose(); surf = null; }
+            fLab.Dispose(); sf.Dispose();
         }
+        base.Dispose(disposing);
     }
 
     static void Px(Graphics g, Brush b, int ox, int oy, int pu, int c, int r, int w)

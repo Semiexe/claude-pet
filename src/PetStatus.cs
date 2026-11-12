@@ -34,6 +34,7 @@ public partial class PetForm
         if (now < nextPoll) return;
         nextPoll = now.AddSeconds(1);
         List<Sess> list = new List<Sess>();
+        HashSet<string> present = new HashSet<string>();
         try
         {
             if (Directory.Exists(stateDir))
@@ -41,9 +42,15 @@ public partial class PetForm
                 {
                     Sess s = new Sess();
                     s.id = Path.GetFileNameWithoutExtension(fp);
-                    s.time = File.GetLastWriteTime(fp);
+                    present.Add(s.id);
+                    string[] content;
+                    // Schreibt ein Hook gerade diese Datei, wird nur sie übersprungen, nicht die ganze Runde
+                    try { s.time = File.GetLastWriteTime(fp); content = File.ReadAllLines(fp); }
+                    catch (IOException) { continue; }
+                    catch (UnauthorizedAccessException) { continue; }
                     double age = (now - s.time).TotalMinutes;
-                    foreach (string line in File.ReadAllLines(fp))
+                    if (age > 7 * 24 * 60) { TryDelete(fp); continue; }          // Sitzung, die nie sauber beendet wurde
+                    foreach (string line in content)
                     {
                         int i = line.IndexOf('='); if (i < 0) continue;
                         string k = line.Substring(0, i), v = line.Substring(i + 1);
@@ -64,6 +71,7 @@ public partial class PetForm
                 }
         }
         catch { return; }
+        PruneSessionCaches(present);
         list.Sort(delegate(Sess a, Sess b) { int c = b.rank.CompareTo(a.rank); return c != 0 ? c : b.time.CompareTo(a.time); });
         sessions = list;
         cRun = 0; cNeed = 0; cReady = 0; cBlock = 0;
@@ -150,6 +158,16 @@ public partial class PetForm
             Burst("♥", 1);
         }
         CheckRecap(now);
+    }
+
+    static void TryDelete(string fp) { try { File.Delete(fp); } catch { } }
+
+    // Zwischenspeicher für Sitzungen vergessen, deren Statusdatei es nicht mehr gibt (sonst wachsen sie über Wochen)
+    void PruneSessionCaches(HashSet<string> present)
+    {
+        if (ctxInfo.Count + ctxWarned.Count <= present.Count * 2) return;
+        foreach (string id in new List<string>(ctxInfo.Keys)) if (!present.Contains(id)) ctxInfo.Remove(id);
+        foreach (string id in new List<string>(ctxWarned.Keys)) if (!present.Contains(id)) ctxWarned.Remove(id);
     }
 
     // Seit wie vielen Minuten läuft die Aufgabe dieser Sitzung?

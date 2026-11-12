@@ -29,25 +29,34 @@ class AudioMeter
 {
     IAudioMeterInformation meter;
     object holder;
-    DateTime retryAt = DateTime.MinValue;
+    DateTime retryAt = DateTime.MinValue, openedAt = DateTime.MinValue;
 
     // Aktueller Spitzenwert 0..1; -1, wenn es keinen Lautsprecher oder Fehler gibt
     public float Peak()
     {
         try
         {
+            // Jede Minute neu verbinden: Wechselt der Standard-Lautsprecher (etwa Kopfhörer eingesteckt), misst das Pet sonst am alten Gerät
+            if (meter != null && (DateTime.Now - openedAt).TotalSeconds > 60) { Release(); retryAt = DateTime.MinValue; }
             if (meter == null)
             {
                 if (DateTime.Now < retryAt) return -1;
                 retryAt = DateTime.Now.AddSeconds(30);
                 IMMDeviceEnumerator en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCom();
-                IMMDevice dev;
-                if (en.GetDefaultAudioEndpoint(0, 1, out dev) != 0 || dev == null) return -1;
-                Guid iid = new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064");
-                object o;
-                if (dev.Activate(ref iid, 23, IntPtr.Zero, out o) != 0 || o == null) return -1;
-                holder = o; meter = (IAudioMeterInformation)o;
-                try { Marshal.ReleaseComObject(dev); Marshal.ReleaseComObject(en); } catch { }
+                IMMDevice dev = null;
+                try
+                {
+                    if (en.GetDefaultAudioEndpoint(0, 1, out dev) != 0 || dev == null) return -1;
+                    Guid iid = new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064");
+                    object o;
+                    if (dev.Activate(ref iid, 23, IntPtr.Zero, out o) != 0 || o == null) return -1;
+                    holder = o; meter = (IAudioMeterInformation)o; openedAt = DateTime.Now;
+                }
+                finally
+                {
+                    // auch im Fehlerfall freigeben, sonst bleibt bei jedem neuen Versuch ein COM-Objekt liegen
+                    try { if (dev != null) Marshal.ReleaseComObject(dev); Marshal.ReleaseComObject(en); } catch { }
+                }
             }
             float p;
             if (meter.GetPeakValue(out p) != 0) { Release(); return -1; }
